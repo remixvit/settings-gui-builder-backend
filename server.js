@@ -103,9 +103,19 @@ app.post('/compile', compileLimiter, upload.single('projectZip'), async (req, re
 
             // 5. Отправляем файл пользователю
             res.download(binPath, 'firmware.bin', (err) => {
+                if (err) {
+                    console.error('Download error:', err);
+                    sendLog(buildId, `❌ Ошибка при передаче файла: ${err.message}`);
+                }
+
                 // 6. Очистка после отправки
-                fs.rmSync(workDir, { recursive: true, force: true });
-                if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+                try {
+                    if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
+                    if (zipPath && fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+                } catch (cleanupErr) {
+                    console.error('Cleanup error:', cleanupErr);
+                }
+
                 sendLog(buildId, `Build workflow complete. Temporary files cleaned up.`);
 
                 const ws = wsClients.get(buildId);
