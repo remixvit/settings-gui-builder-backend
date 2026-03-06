@@ -105,25 +105,45 @@ app.post('/compile', compileLimiter, upload.single('projectZip'), async (req, re
             sendLog(buildId, `\nCompilation finished! Sending firmware (${(stats.size / 1024).toFixed(1)} KB)...`);
             console.log(`Sending firmware: ${binPath} (${stats.size} bytes)`);
 
-            // 5. Отправляем файл пользователю
-            res.download(binPath, 'firmware.bin', (err) => {
-                if (err) {
-                    console.error('Download error:', err);
-                    sendLog(buildId, `❌ Ошибка при передаче файла: ${err.message}`);
-                }
+            // 5. Отправляем файл пользователю (Вручную через потоки для надежности)
+            res.setHeader('Content-Type', 'application/octet-stream');
+            res.setHeader('Content-Disposition', 'attachment; filename=firmware.bin');
+            res.setHeader('Content-Length', stats.size);
 
-                // 6. Очистка после отправки
-                try {
-                    if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
-                    if (zipPath && fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
-                } catch (cleanupErr) {
-                    console.error('Cleanup error:', cleanupErr);
-                }
+            const fileStream = fs.createReadStream(binPath);
 
-                sendLog(buildId, `Build workflow complete. Temporary files cleaned up.`);
+            fileStream.on('open', () => {
+                sendLog(buildId, `📡 Начинаю прямую передачу бинарных данных (${(stats.size / 1024).toFixed(1)} КБ)...`);
+                fileStream.pipe(res);
+            });
+
+            fileStream.on('error', (err) => {
+                console.error('File stream error:', err);
+                sendLog(buildId, `❌ Ошибка чтения файла: ${err.message}`);
+                if (!res.headersSent) res.status(500).send('Error reading firmware.');
+            });
+
+            res.on('finish', () => {
+                sendLog(buildId, `✅ Передача файла завершена. Сессия закрыта (Очистка через 60с).`);
+
+                // 6. Очистка с задержкой (чтобы Nginx успел все прожевать)
+                setTimeout(() => {
+                    try {
+                        if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
+                        if (zipPath && fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+                        console.log(`Cleanup complete for ${buildId}`);
+                    } catch (cleanupErr) {
+                        console.error('Cleanup error:', cleanupErr);
+                    }
+                }, 60000); // 1 минута задержки
 
                 const ws = wsClients.get(buildId);
                 if (ws) ws.close();
+            });
+
+            res.on('error', (err) => {
+                console.error('Response error:', err);
+                sendLog(buildId, `❌ Ошибка сети при отправке: ${err.message}`);
             });
         });
 
