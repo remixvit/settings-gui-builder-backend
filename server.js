@@ -95,36 +95,32 @@ app.post('/compile', compileLimiter, upload.single('projectZip'), async (req, re
 
             sendLog(buildId, `\nCompilation finished successfully! Sending firmware...`);
 
-            // 4. Ищем готовый .bin файл
-            const binPath = path.join(workDir, '.pio', 'build', envName, 'firmware.bin');
-            if (!fs.existsSync(binPath)) {
+            // 4. Собираем все необходимые файлы
+            const buildPath = path.join(workDir, '.pio', 'build', envName);
+            const files = {
+                firmware: path.join(buildPath, 'firmware.bin'),
+                bootloader: path.join(buildPath, 'bootloader.bin'),
+                partitions: path.join(buildPath, 'partitions.bin')
+            };
+
+            if (!fs.existsSync(files.firmware)) {
                 return res.status(500).send('Firmware binary not found after compilation.');
             }
 
-            const stats = fs.statSync(binPath);
-            sendLog(buildId, `\nCompilation finished! Sending firmware (${(stats.size / 1024).toFixed(1)} KB)...`);
-            console.log(`Sending firmware: ${binPath} (${stats.size} bytes)`);
+            const responseData = {};
+            for (const [key, filePath] of Object.entries(files)) {
+                if (fs.existsSync(filePath)) {
+                    const data = fs.readFileSync(filePath);
+                    responseData[key] = data.toString('base64');
+                    sendLog(buildId, `📦 Файл ${key}.bin добавлен в пакет (${(data.length / 1024).toFixed(1)} КБ)`);
+                }
+            }
 
-            // 5. Отправляем файл пользователю (Вручную через потоки для надежности)
-            res.setHeader('Content-Type', 'application/octet-stream');
-            res.setHeader('Content-Disposition', 'attachment; filename=firmware.bin');
-            res.setHeader('Content-Length', stats.size);
-
-            const fileStream = fs.createReadStream(binPath);
-
-            fileStream.on('open', () => {
-                sendLog(buildId, `📡 Начинаю прямую передачу бинарных данных (${(stats.size / 1024).toFixed(1)} КБ)...`);
-                fileStream.pipe(res);
-            });
-
-            fileStream.on('error', (err) => {
-                console.error('File stream error:', err);
-                sendLog(buildId, `❌ Ошибка чтения файла: ${err.message}`);
-                if (!res.headersSent) res.status(500).send('Error reading firmware.');
-            });
+            console.log(`Sending multi-binary package for ${buildId}`);
+            res.json(responseData);
 
             res.on('finish', () => {
-                sendLog(buildId, `✅ Передача файла завершена. Сессия закрыта (Очистка через 60с).`);
+                sendLog(buildId, `✅ Передача данных завершена. Сессия закрыта (Очистка через 60с).`);
 
                 // 6. Очистка с задержкой (чтобы Nginx успел все прожевать)
                 setTimeout(() => {
