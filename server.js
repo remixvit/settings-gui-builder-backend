@@ -101,6 +101,10 @@ app.post('/compile', compileLimiter, upload.single('projectZip'), async (req, re
                 return res.status(500).send('Firmware binary not found after compilation.');
             }
 
+            const stats = fs.statSync(binPath);
+            sendLog(buildId, `\nCompilation finished! Sending firmware (${(stats.size / 1024).toFixed(1)} KB)...`);
+            console.log(`Sending firmware: ${binPath} (${stats.size} bytes)`);
+
             // 5. Отправляем файл пользователю
             res.download(binPath, 'firmware.bin', (err) => {
                 if (err) {
